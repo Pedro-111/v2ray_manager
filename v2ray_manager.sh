@@ -286,7 +286,8 @@ while true; do
     echo "2. Crear nueva cuenta"
     echo "3. Listar cuentas"
     echo "4. Eliminar cuenta"
-    echo "5. Salir"
+    echo "5. Verificar y reparar configuración"
+    echo "6. Salir "
     read -p "Seleccione una opción: " choice
     
     case $choice in
