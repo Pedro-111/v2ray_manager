@@ -21,6 +21,7 @@ install_v2ray() {
     systemctl enable v2ray
     systemctl start v2ray
     echo -e "${GREEN}V2Ray instalado y activado.${NC}"
+    check_and_repair_config
 }
 
 # Función para generar un UUID aleatorio
@@ -74,6 +75,13 @@ check_and_repair_config() {
 }
 EOL
         echo -e "${GREEN}Configuración básica creada.${NC}"
+    else
+        # Verificar si la estructura de la configuración es correcta
+        if ! jq -e '.inbounds[0].settings.clients' /usr/local/etc/v2ray/config.json > /dev/null 2>&1; then
+            echo -e "${RED}La estructura de la configuración no es correcta. Corrigiendo...${NC}"
+            jq '.inbounds[0].settings.clients = []' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
+            mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
+        fi
     fi
 
     if v2ray test -config /usr/local/etc/v2ray/config.json; then
@@ -88,6 +96,7 @@ EOL
 }
 # Función para crear una nueva cuenta
 create_account() {
+    check_and_repair_config
     echo -e "${YELLOW}Creando nueva cuenta V2Ray...${NC}"
     
     # Generar un nuevo UUID
@@ -114,25 +123,6 @@ create_account() {
     read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
     port=${port:-10086}
     
-     # Preguntar al usuario si desea usar IP pública o privada
-    echo "¿Qué dirección IP desea usar?"
-    echo "1. IP privada (local)"
-    echo "2. IP pública"
-    read -p "Elija una opción (1-2): " ip_choice
-
-    check_and_repair_config
-    case $ip_choice in
-        1) 
-            ip_address=$(get_local_ip)
-            ;;
-        2) 
-            ip_address=$(get_public_ip)
-            ;;
-        *) 
-            echo "Opción inválida. Usando IP privada por defecto."
-            ip_address=$(get_local_ip)
-            ;;
-    esac
     # Configurar según la elección
     case $protocol_choice in
         1) 
@@ -158,39 +148,29 @@ create_account() {
             ;;
     esac
     
-    # Crear la nueva configuración
+    # Crear la nueva configuración de cliente
     if [ "$protocol" = "vless" ]; then
-        client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"xtls-rprx-direct\"}"
+        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"xtls-rprx-direct\"}"
     else
-        client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
-    fi
-
-    new_inbound=$(jq -n \
-                    --arg port "$port" \
-                    --arg protocol "$protocol" \
-                    --argjson client "$client_settings" \
-                    --argjson ws "$ws_settings" \
-                    '{
-                        "port": $port|tonumber,
-                        "protocol": $protocol,
-                        "settings": {
-                            "clients": [$client]
-                        },
-                        "streamSettings": $ws
-                    }')
-
-    # Verificar si el archivo de configuración existe
-    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
-        echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
-        return
+        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
     fi
 
     # Leer la configuración actual
-    current_config=$(cat /usr/local/etc/v2ray/config.json)
+    config=$(cat /usr/local/etc/v2ray/config.json)
 
-    # Actualizar la configuración de V2Ray
-    echo $current_config | jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' > /tmp/v2ray_config_temp.json
-    mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
+    # Añadir el nuevo cliente a la configuración existente
+    updated_config=$(echo $config | jq --argjson new_client "$new_client" '.inbounds[0].settings.clients += [$new_client]')
+
+    # Actualizar el puerto y el protocolo si es necesario
+    updated_config=$(echo $updated_config | jq --arg port "$port" --arg protocol "$protocol" '.inbounds[0].port = ($port | tonumber) | .inbounds[0].protocol = $protocol')
+
+    # Actualizar la configuración de WebSocket si es necesario
+    if [ "$ws_settings" != "{}" ]; then
+        updated_config=$(echo $updated_config | jq --argjson ws "$ws_settings" '.inbounds[0].streamSettings = $ws')
+    fi
+
+    # Guardar la configuración actualizada
+    echo $updated_config > /usr/local/etc/v2ray/config.json
     
     # Reiniciar V2Ray para aplicar los cambios
     systemctl restart v2ray
@@ -202,26 +182,17 @@ create_account() {
     echo "Nombre: $account_name"
     echo "UUID: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
-    echo "IP: $ip_address"
+    echo "IP local: $local_ip"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
         echo "Path WebSocket: /ws"
     fi
-    # Agregar verificaciones después de crear la cuenta
-    verify_v2ray_config
-    check_v2ray_status
-
-    # Verificar si el puerto está en uso
-    if netstat -tuln | grep :$port > /dev/null; then
-        echo -e "${GREEN}El puerto $port está en uso por V2Ray.${NC}"
-    else
-        echo -e "${RED}El puerto $port no parece estar en uso. Verifique la configuración y los logs de V2Ray.${NC}"
-    fi
 }
 
 # Función para listar todas las cuentas
 list_accounts() {
+    check_and_repair_config
     echo -e "${YELLOW}Listando todas las cuentas V2Ray...${NC}"
     
     # Obtener la IP local
@@ -255,6 +226,7 @@ list_accounts() {
 
 # Función para eliminar una cuenta
 delete_account() {
+    check_and_repair_config
     echo -e "${YELLOW}Eliminando una cuenta V2Ray...${NC}"
     list_accounts
     read -p "Ingrese el email de la cuenta que desea eliminar: " account_email
@@ -305,7 +277,8 @@ while true; do
         2) create_account ;;
         3) list_accounts ;;
         4) delete_account ;;
-        5) echo "Saliendo..."; exit 0 ;;
+        5) check_and_repair_config ;;
+        6) echo "Saliendo..."; exit 0 ;;
         *) echo -e "${RED}Opción inválida. Por favor, intente de nuevo.${NC}" ;;
     esac
 done
