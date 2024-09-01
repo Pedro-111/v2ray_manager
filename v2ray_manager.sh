@@ -6,6 +6,11 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
+# Función para obtener la IP pública
+get_public_ip() {
+    curl -s https://api.ipify.org
+}
+
 # Función para instalar V2Ray
 install_v2ray() {
     echo -e "${YELLOW}Instalando V2Ray...${NC}"
@@ -36,40 +41,108 @@ create_account() {
     # Calcular la fecha de expiración
     expiry_date=$(date -d "+$duration days" +"%Y-%m-%d")
     
-    # Seleccionar el protocolo
-    echo "Seleccione el protocolo:"
+    # Seleccionar el protocolo y la configuración
+    echo "Seleccione el protocolo y la configuración:"
     echo "1. VMess"
-    echo "2. VLESS"
-    read -p "Elija una opción (1-2): " protocol_choice
+    echo "2. VMess + WebSocket"
+    echo "3. VLESS"
+    echo "4. VLESS + WebSocket"
+    read -p "Elija una opción (1-4): " protocol_choice
     
+    # Obtener el puerto actual
+    current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
+    
+    # Configurar según la elección
     case $protocol_choice in
-        1) protocol="vmess" ;;
-        2) protocol="vless" ;;
-        *) echo "Opción inválida. Usando VMess por defecto."; protocol="vmess" ;;
+        1) 
+            protocol="vmess"
+            ws_settings=""
+            ;;
+        2) 
+            protocol="vmess"
+            ws_settings=', "streamSettings": {"network": "ws", "wsSettings": {"path": "/ws"}}'
+            ;;
+        3) 
+            protocol="vless"
+            ws_settings=""
+            ;;
+        4) 
+            protocol="vless"
+            ws_settings=', "streamSettings": {"network": "ws", "wsSettings": {"path": "/ws"}}'
+            ;;
+        *) 
+            echo "Opción inválida. Usando VMess por defecto."
+            protocol="vmess"
+            ws_settings=""
+            ;;
     esac
     
-    # Agregar la nueva configuración al archivo config.json de V2Ray
-    if [ "$protocol" = "vmess" ]; then
-        jq --arg uuid "$uuid" --arg name "$account_name" '.inbounds[0].settings.clients += [{"id": $uuid, "email": $name}]' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
-    else
-        jq --arg uuid "$uuid" --arg name "$account_name" '.inbounds[0].settings.clients += [{"id": $uuid, "email": $name, "flow": "xtls-rprx-direct"}]' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
-    fi
+    # Crear la nueva configuración
+    new_inbound=$(cat <<EOF
+{
+  "port": $current_port,
+  "protocol": "$protocol",
+  "settings": {
+    "clients": [
+      {
+        "id": "$uuid",
+        "email": "$account_name"
+        ${protocol == "vless" ? ', "flow": "xtls-rprx-direct"' : ''}
+      }
+    ]
+  }
+  $ws_settings
+}
+EOF
+)
+
+    # Actualizar la configuración de V2Ray
+    jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
     mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
     
     # Reiniciar V2Ray para aplicar los cambios
     systemctl restart v2ray
     
+    # Obtener la IP pública
+    public_ip=$(get_public_ip)
+    
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
     echo "UUID: $uuid"
-    echo "Protocolo: $protocol"
+    echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
+    echo "IP: $public_ip"
+    echo "Puerto: $current_port"
     echo "Fecha de expiración: $expiry_date"
+    if [[ $ws_settings ]]; then
+        echo "Path WebSocket: /ws"
+    fi
 }
 
 # Función para listar todas las cuentas
 list_accounts() {
     echo -e "${YELLOW}Listando todas las cuentas V2Ray...${NC}"
-    jq '.inbounds[0].settings.clients[] | {email: .email, id: .id}' /usr/local/etc/v2ray/config.json
+    
+    # Obtener la IP pública
+    public_ip=$(get_public_ip)
+    
+    # Obtener el puerto y protocolo actuales
+    current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
+    current_protocol=$(jq -r '.inbounds[0].protocol' /usr/local/etc/v2ray/config.json)
+    
+    # Verificar si se está usando WebSocket
+    using_ws=$(jq -r '.inbounds[0].streamSettings.network // empty' /usr/local/etc/v2ray/config.json)
+    
+    echo "Configuración actual:"
+    echo "IP: $public_ip"
+    echo "Puerto: $current_port"
+    echo "Protocolo: $current_protocol${using_ws:+ con WebSocket}"
+    if [[ $using_ws ]]; then
+        ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // "/ws"' /usr/local/etc/v2ray/config.json)
+        echo "Path WebSocket: $ws_path"
+    fi
+    echo ""
+    echo "Cuentas:"
+    jq -r '.inbounds[0].settings.clients[] | "Email: \(.email)\nUUID: \(.id)\n"' /usr/local/etc/v2ray/config.json
 }
 
 # Función para eliminar una cuenta
