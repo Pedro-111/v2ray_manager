@@ -114,7 +114,7 @@ create_account() {
     read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
     port=${port:-10086}
     
-     # Preguntar al usuario si desea usar IP pública o privada
+    # Preguntar al usuario si desea usar IP pública o privada
     echo "¿Qué dirección IP desea usar?"
     echo "1. IP privada (local)"
     echo "2. IP pública"
@@ -133,6 +133,7 @@ create_account() {
             ip_address=$(get_local_ip)
             ;;
     esac
+    
     # Configurar según la elección
     case $protocol_choice in
         1) 
@@ -158,45 +159,56 @@ create_account() {
             ;;
     esac
     
-    # Crear la nueva configuración
+    # Crear la nueva configuración de cliente
     if [ "$protocol" = "vless" ]; then
         client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"xtls-rprx-direct\"}"
     else
         client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
     fi
 
-    new_inbound=$(jq -n \
-                    --arg port "$port" \
-                    --arg protocol "$protocol" \
-                    --argjson client "$client_settings" \
-                    --argjson ws "$ws_settings" \
-                    '{
-                        "port": $port|tonumber,
-                        "protocol": $protocol,
-                        "settings": {
-                            "clients": [$client]
-                        },
-                        "streamSettings": $ws
-                    }')
-
-    # Verificar si el archivo de configuración existe
+    # Leer la configuración actual
     if [ ! -f /usr/local/etc/v2ray/config.json ]; then
         echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
         return
     fi
-
-    # Leer la configuración actual
+    
     current_config=$(cat /usr/local/etc/v2ray/config.json)
 
-    # Actualizar la configuración de V2Ray
-    echo $current_config | jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' > /tmp/v2ray_config_temp.json
+    # Verificar si el puerto ya tiene una configuración en el archivo
+    existing_inbound=$(echo "$current_config" | jq --arg port "$port" '.inbounds[] | select(.port == ($port | tonumber))')
+
+    if [ -n "$existing_inbound" ]; then
+        # El puerto ya existe, agregar el nuevo cliente
+        updated_inbounds=$(echo "$current_config" | jq --argjson new_client "$client_settings" \
+            --arg port "$port" \
+            '.inbounds[] | select(.port == ($port | tonumber)) | .settings.clients += [$new_client]')
+        updated_config=$(echo "$current_config" | jq --argjson updated_inbounds "$updated_inbounds" \
+            '.inbounds = $updated_inbounds | unique')
+    else
+        # El puerto no existe, crear una nueva entrada
+        new_inbound=$(jq -n \
+                        --arg port "$port" \
+                        --arg protocol "$protocol" \
+                        --argjson client "$client_settings" \
+                        --argjson ws "$ws_settings" \
+                        '{
+                            "port": $port|tonumber,
+                            "protocol": $protocol,
+                            "settings": {
+                                "clients": [$client]
+                            },
+                            "streamSettings": $ws
+                        }')
+        updated_config=$(echo "$current_config" | jq --argjson new_inbound "$new_inbound" \
+            '.inbounds += [$new_inbound]')
+    fi
+
+    # Guardar la configuración actualizada
+    echo "$updated_config" > /tmp/v2ray_config_temp.json
     mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
     
     # Reiniciar V2Ray para aplicar los cambios
     systemctl restart v2ray
-    
-    # Obtener la IP local
-    local_ip=$(get_local_ip)
     
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
