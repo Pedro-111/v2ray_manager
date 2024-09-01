@@ -111,18 +111,10 @@ create_account() {
     read -p "Elija una opción (1-4): " protocol_choice
     
     # Solicitar al usuario el puerto
-    while true; do
-        read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
-        port=${port:-10086}
-        
-        if netstat -tuln | grep :$port > /dev/null; then
-            echo -e "${YELLOW}El puerto $port ya está en uso. Elija otro puerto.${NC}"
-        else
-            break
-        fi
-    done
-
-    # Preguntar al usuario si desea usar IP pública o privada
+    read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
+    port=${port:-10086}
+    
+     # Preguntar al usuario si desea usar IP pública o privada
     echo "¿Qué dirección IP desea usar?"
     echo "1. IP privada (local)"
     echo "2. IP pública"
@@ -197,7 +189,7 @@ create_account() {
     current_config=$(cat /usr/local/etc/v2ray/config.json)
 
     # Actualizar la configuración de V2Ray
-    echo $current_config | jq --argjson new_inbound "$new_inbound" '.inbounds += [$new_inbound]' > /tmp/v2ray_config_temp.json
+    echo $current_config | jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' > /tmp/v2ray_config_temp.json
     mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
     
     # Reiniciar V2Ray para aplicar los cambios
