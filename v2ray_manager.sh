@@ -56,45 +56,47 @@ create_account() {
     case $protocol_choice in
         1) 
             protocol="vmess"
-            ws_settings=""
+            ws_settings='{}'
             ;;
         2) 
             protocol="vmess"
-            ws_settings=', "streamSettings": {"network": "ws", "wsSettings": {"path": "/ws"}}'
+            ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
             ;;
         3) 
             protocol="vless"
-            ws_settings=""
+            ws_settings='{}'
             ;;
         4) 
             protocol="vless"
-            ws_settings=', "streamSettings": {"network": "ws", "wsSettings": {"path": "/ws"}}'
+            ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
             ;;
         *) 
             echo "Opción inválida. Usando VMess por defecto."
             protocol="vmess"
-            ws_settings=""
+            ws_settings='{}'
             ;;
     esac
     
     # Crear la nueva configuración
-    new_inbound=$(cat <<EOF
-{
-  "port": $current_port,
-  "protocol": "$protocol",
-  "settings": {
-    "clients": [
-      {
-        "id": "$uuid",
-        "email": "$account_name"
-        ${protocol == "vless" ? ', "flow": "xtls-rprx-direct"' : ''}
-      }
-    ]
-  }
-  $ws_settings
-}
-EOF
-)
+    if [ "$protocol" = "vless" ]; then
+        client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"xtls-rprx-direct\"}"
+    else
+        client_settings="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
+    fi
+
+    new_inbound=$(jq -n \
+                    --arg port "$current_port" \
+                    --arg protocol "$protocol" \
+                    --argjson client "$client_settings" \
+                    --argjson ws "$ws_settings" \
+                    '{
+                        "port": $port|tonumber,
+                        "protocol": $protocol,
+                        "settings": {
+                            "clients": [$client]
+                        },
+                        "streamSettings": $ws
+                    }')
 
     # Actualizar la configuración de V2Ray
     jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
@@ -113,11 +115,10 @@ EOF
     echo "IP: $public_ip"
     echo "Puerto: $current_port"
     echo "Fecha de expiración: $expiry_date"
-    if [[ $ws_settings ]]; then
+    if [ "$ws_settings" != "{}" ]; then
         echo "Path WebSocket: /ws"
     fi
 }
-
 # Función para listar todas las cuentas
 list_accounts() {
     echo -e "${YELLOW}Listando todas las cuentas V2Ray...${NC}"
