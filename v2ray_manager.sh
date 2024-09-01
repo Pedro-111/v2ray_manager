@@ -102,11 +102,25 @@ create_account() {
     # Generar un nuevo UUID
     uuid=$(generate_uuid)
     
-    # Solicitar al usuario el nombre de la cuenta
-    read -p "Ingrese el nombre para la nueva cuenta: " account_name
+    # Solicitar al usuario el nombre de la cuenta y verificar que no exista
+    while true; do
+        read -p "Ingrese el nombre para la nueva cuenta: " account_name
+        if grep -q "\"email\": \"$account_name\"" /usr/local/etc/v2ray/config.json; then
+            echo -e "${RED}Ya existe una cuenta con ese nombre. Por favor, elija otro.${NC}"
+        else
+            break
+        fi
+    done
     
     # Solicitar al usuario la duración en días
-    read -p "Ingrese la duración de la cuenta en días: " duration
+    while true; do
+        read -p "Ingrese la duración de la cuenta en días: " duration
+        if [[ "$duration" =~ ^[0-9]+$ ]]; then
+            break
+        else
+            echo -e "${RED}Por favor, ingrese un número válido de días.${NC}"
+        fi
+    done
     
     # Calcular la fecha de expiración
     expiry_date=$(date -d "+$duration days" +"%Y-%m-%d")
@@ -117,30 +131,48 @@ create_account() {
     echo "2. VMess + WebSocket"
     echo "3. VLESS"
     echo "4. VLESS + WebSocket"
-    read -p "Elija una opción (1-4): " protocol_choice
+    while true; do
+        read -p "Elija una opción (1-4): " protocol_choice
+        if [[ "$protocol_choice" =~ ^[1-4]$ ]]; then
+            break
+        else
+            echo -e "${RED}Por favor, elija una opción válida (1-4).${NC}"
+        fi
+    done
     
-    # Solicitar al usuario el puerto
-    read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
-    port=${port:-10086}
+    # Solicitar al usuario el puerto y verificar que esté disponible
+    while true; do
+        read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
+        port=${port:-10086}
+        if ! netstat -tuln | grep -q ":$port "; then
+            break
+        else
+            echo -e "${RED}El puerto $port ya está en uso. Por favor, elija otro.${NC}"
+        fi
+    done
+
     # Preguntar al usuario si desea usar IP pública o privada
     echo "¿Qué dirección IP desea usar?"
     echo "1. IP privada (local)"
     echo "2. IP pública"
-    read -p "Elija una opción (1-2): " ip_choice
-    
-    case $ip_choice in
-        1) 
-            ip_address=$(get_local_ip)
-            ;;
-        2) 
-            ip_address=$(get_public_ip)
-            ;;
-        *) 
-            echo "Opción inválida. Usando IP privada por defecto."
-            ip_address=$(get_local_ip)
-            ;;
-    esac
-    # Configurar según la elección
+    while true; do
+        read -p "Elija una opción (1-2): " ip_choice
+        case $ip_choice in
+            1) 
+                ip_address=$(get_local_ip)
+                break
+                ;;
+            2) 
+                ip_address=$(get_public_ip)
+                break
+                ;;
+            *) 
+                echo -e "${RED}Opción inválida. Por favor, elija 1 o 2.${NC}"
+                ;;
+        esac
+    done
+
+    # Configurar según la elección de protocolo
     case $protocol_choice in
         1) 
             protocol="vmess"
@@ -158,11 +190,6 @@ create_account() {
             protocol="vless"
             ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
             ;;
-        *) 
-            echo "Opción inválida. Usando VMess por defecto."
-            protocol="vmess"
-            ws_settings='{}'
-            ;;
     esac
     
     # Crear la nueva configuración de cliente
@@ -173,27 +200,47 @@ create_account() {
     fi
 
     # Leer la configuración actual
+    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
+        echo -e "${RED}El archivo de configuración no existe. Ejecutando check_and_repair_config...${NC}"
+        check_and_repair_config
+    fi
     config=$(cat /usr/local/etc/v2ray/config.json)
 
     # Añadir el nuevo cliente a la configuración existente
     updated_config=$(echo $config | jq --argjson new_client "$new_client" '.inbounds[0].settings.clients += [$new_client]')
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error al actualizar la configuración. Abortando...${NC}"
+        return 1
+    fi
 
-    # Actualizar el puerto y el protocolo si es necesario
+    # Actualizar el puerto y el protocolo
     updated_config=$(echo $updated_config | jq --arg port "$port" --arg protocol "$protocol" '.inbounds[0].port = ($port | tonumber) | .inbounds[0].protocol = $protocol')
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error al actualizar el puerto y el protocolo. Abortando...${NC}"
+        return 1
+    fi
 
     # Actualizar la configuración de WebSocket si es necesario
     if [ "$ws_settings" != "{}" ]; then
         updated_config=$(echo $updated_config | jq --argjson ws "$ws_settings" '.inbounds[0].streamSettings = $ws')
+        if [ $? -ne 0 ]; then
+            echo -e "${RED}Error al actualizar la configuración de WebSocket. Abortando...${NC}"
+            return 1
+        fi
     fi
 
     # Guardar la configuración actualizada
     echo $updated_config > /usr/local/etc/v2ray/config.json
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}Error al guardar la configuración. Abortando...${NC}"
+        return 1
+    fi
     
     # Reiniciar V2Ray para aplicar los cambios
-    systemctl restart v2ray
-    
-    # Obtener la IP local
-    local_ip=$(get_local_ip)
+    if ! systemctl restart v2ray; then
+        echo -e "${RED}Error al reiniciar V2Ray. Por favor, verifique los logs del sistema.${NC}"
+        return 1
+    fi
     
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
