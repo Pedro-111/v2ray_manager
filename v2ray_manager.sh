@@ -6,9 +6,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m' # No Color
 
-# Función para obtener la IP pública
-get_public_ip() {
-    curl -s https://api.ipify.org
+# Función para obtener la IP local
+get_local_ip() {
+    ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1
 }
 
 # Función para instalar V2Ray
@@ -115,27 +115,34 @@ create_account() {
     # Reiniciar V2Ray para aplicar los cambios
     systemctl restart v2ray
     
-    # Obtener la IP pública
-    public_ip=$(get_public_ip)
+    # Obtener la IP local
+    local_ip=$(get_local_ip)
     
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
     echo "UUID: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
-    echo "IP: $public_ip"
+    echo "IP local: $local_ip"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
         echo "Path WebSocket: /ws"
     fi
 }
+
 # Función para listar todas las cuentas
 list_accounts() {
     echo -e "${YELLOW}Listando todas las cuentas V2Ray...${NC}"
     
-    # Obtener la IP pública
-    public_ip=$(get_public_ip)
+    # Obtener la IP local
+    local_ip=$(get_local_ip)
     
+    # Verificar si el archivo de configuración existe
+    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
+        echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
+        return
+    fi
+
     # Obtener el puerto y protocolo actuales
     current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
     current_protocol=$(jq -r '.inbounds[0].protocol' /usr/local/etc/v2ray/config.json)
@@ -144,7 +151,7 @@ list_accounts() {
     using_ws=$(jq -r '.inbounds[0].streamSettings.network // empty' /usr/local/etc/v2ray/config.json)
     
     echo "Configuración actual:"
-    echo "IP: $public_ip"
+    echo "IP local: $local_ip"
     echo "Puerto: $current_port"
     echo "Protocolo: $current_protocol${using_ws:+ con WebSocket}"
     if [[ $using_ws ]]; then
@@ -162,6 +169,12 @@ delete_account() {
     list_accounts
     read -p "Ingrese el email de la cuenta que desea eliminar: " account_email
     
+    # Verificar si el archivo de configuración existe
+    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
+        echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
+        return
+    fi
+
     jq --arg email "$account_email" 'del(.inbounds[0].settings.clients[] | select(.email == $email))' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
     mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
     
