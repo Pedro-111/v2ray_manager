@@ -53,7 +53,39 @@ verify_v2ray_config() {
         echo -e "${RED}La configuración de V2Ray no es válida. Por favor, revise el archivo de configuración.${NC}"
     fi
 }
+# Función para verificar y reparar la configuración de V2Ray
+check_and_repair_config() {
+    echo -e "${YELLOW}Verificando la configuración de V2Ray...${NC}"
+    if [ ! -f /usr/local/etc/v2ray/config.json ] || [ ! -s /usr/local/etc/v2ray/config.json ]; then
+        echo -e "${RED}El archivo de configuración está vacío o no existe. Creando una configuración básica...${NC}"
+        sudo tee /usr/local/etc/v2ray/config.json > /dev/null << EOL
+{
+  "inbounds": [{
+    "port": 10086,
+    "protocol": "vmess",
+    "settings": {
+      "clients": []
+    }
+  }],
+  "outbounds": [{
+    "protocol": "freedom",
+    "settings": {}
+  }]
+}
+EOL
+        echo -e "${GREEN}Configuración básica creada.${NC}"
+    fi
 
+    if v2ray test -config /usr/local/etc/v2ray/config.json; then
+        echo -e "${GREEN}La configuración de V2Ray es válida.${NC}"
+    else
+        echo -e "${RED}La configuración de V2Ray no es válida. Se ha creado una configuración básica.${NC}"
+        # Aquí puedes agregar lógica adicional para reparar configuraciones específicas si es necesario
+    fi
+
+    systemctl restart v2ray
+    echo -e "${GREEN}V2Ray ha sido reiniciado con la nueva configuración.${NC}"
+}
 # Función para crear una nueva cuenta
 create_account() {
     echo -e "${YELLOW}Creando nueva cuenta V2Ray...${NC}"
@@ -87,6 +119,8 @@ create_account() {
     echo "1. IP privada (local)"
     echo "2. IP pública"
     read -p "Elija una opción (1-2): " ip_choice
+
+    check_and_repair_config
     case $ip_choice in
         1) 
             ip_address=$(get_local_ip)
