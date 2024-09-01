@@ -122,7 +122,24 @@ create_account() {
     # Solicitar al usuario el puerto
     read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
     port=${port:-10086}
+    # Preguntar al usuario si desea usar IP pública o privada
+    echo "¿Qué dirección IP desea usar?"
+    echo "1. IP privada (local)"
+    echo "2. IP pública"
+    read -p "Elija una opción (1-2): " ip_choice
     
+    case $ip_choice in
+        1) 
+            ip_address=$(get_local_ip)
+            ;;
+        2) 
+            ip_address=$(get_public_ip)
+            ;;
+        *) 
+            echo "Opción inválida. Usando IP privada por defecto."
+            ip_address=$(get_local_ip)
+            ;;
+    esac
     # Configurar según la elección
     case $protocol_choice in
         1) 
@@ -182,7 +199,7 @@ create_account() {
     echo "Nombre: $account_name"
     echo "UUID: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
-    echo "IP local: $local_ip"
+    echo "IP: $ip_address"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
