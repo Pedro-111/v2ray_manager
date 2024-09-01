@@ -10,7 +10,10 @@ NC='\033[0m' # No Color
 get_local_ip() {
     ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1
 }
-
+# Función para obtener la IP pública
+get_public_ip() {
+    curl -s ifconfig.me
+}
 # Función para instalar V2Ray
 install_v2ray() {
     echo -e "${YELLOW}Instalando V2Ray...${NC}"
@@ -23,6 +26,32 @@ install_v2ray() {
 # Función para generar un UUID aleatorio
 generate_uuid() {
     cat /proc/sys/kernel/random/uuid
+}
+# Función para verificar el estado de V2Ray
+check_v2ray_status() {
+    echo -e "${YELLOW}Verificando el estado de V2Ray...${NC}"
+    if systemctl is-active --quiet v2ray; then
+        echo -e "${GREEN}V2Ray está activo y en ejecución.${NC}"
+    else
+        echo -e "${RED}V2Ray no está en ejecución. Intentando iniciar...${NC}"
+        systemctl start v2ray
+        if systemctl is-active --quiet v2ray; then
+            echo -e "${GREEN}V2Ray se ha iniciado correctamente.${NC}"
+        else
+            echo -e "${RED}No se pudo iniciar V2Ray. Verifique los logs para más detalles.${NC}"
+            journalctl -u v2ray | tail -n 20
+        fi
+    fi
+}
+
+# Función para verificar la configuración de V2Ray
+verify_v2ray_config() {
+    echo -e "${YELLOW}Verificando la configuración de V2Ray...${NC}"
+    if v2ray test -config /usr/local/etc/v2ray/config.json; then
+        echo -e "${GREEN}La configuración de V2Ray es válida.${NC}"
+    else
+        echo -e "${RED}La configuración de V2Ray no es válida. Por favor, revise el archivo de configuración.${NC}"
+    fi
 }
 
 # Función para crear una nueva cuenta
@@ -53,6 +82,23 @@ create_account() {
     read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
     port=${port:-10086}
     
+     # Preguntar al usuario si desea usar IP pública o privada
+    echo "¿Qué dirección IP desea usar?"
+    echo "1. IP privada (local)"
+    echo "2. IP pública"
+    read -p "Elija una opción (1-2): " ip_choice
+    case $ip_choice in
+        1) 
+            ip_address=$(get_local_ip)
+            ;;
+        2) 
+            ip_address=$(get_public_ip)
+            ;;
+        *) 
+            echo "Opción inválida. Usando IP privada por defecto."
+            ip_address=$(get_local_ip)
+            ;;
+    esac
     # Configurar según la elección
     case $protocol_choice in
         1) 
@@ -122,11 +168,21 @@ create_account() {
     echo "Nombre: $account_name"
     echo "UUID: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
-    echo "IP local: $local_ip"
+    echo "IP: $ip_address"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
         echo "Path WebSocket: /ws"
+    fi
+    # Agregar verificaciones después de crear la cuenta
+    verify_v2ray_config
+    check_v2ray_status
+
+    # Verificar si el puerto está en uso
+    if netstat -tuln | grep :$port > /dev/null; then
+        echo -e "${GREEN}El puerto $port está en uso por V2Ray.${NC}"
+    else
+        echo -e "${RED}El puerto $port no parece estar en uso. Verifique la configuración y los logs de V2Ray.${NC}"
     fi
 }
 
