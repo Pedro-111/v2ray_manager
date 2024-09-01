@@ -49,8 +49,9 @@ create_account() {
     echo "4. VLESS + WebSocket"
     read -p "Elija una opción (1-4): " protocol_choice
     
-    # Obtener el puerto actual
-    current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
+    # Solicitar al usuario el puerto
+    read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
+    port=${port:-10086}
     
     # Configurar según la elección
     case $protocol_choice in
@@ -85,7 +86,7 @@ create_account() {
     fi
 
     new_inbound=$(jq -n \
-                    --arg port "$current_port" \
+                    --arg port "$port" \
                     --arg protocol "$protocol" \
                     --argjson client "$client_settings" \
                     --argjson ws "$ws_settings" \
@@ -98,8 +99,17 @@ create_account() {
                         "streamSettings": $ws
                     }')
 
+    # Verificar si el archivo de configuración existe
+    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
+        echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
+        return
+    fi
+
+    # Leer la configuración actual
+    current_config=$(cat /usr/local/etc/v2ray/config.json)
+
     # Actualizar la configuración de V2Ray
-    jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
+    echo $current_config | jq --argjson new_inbound "$new_inbound" '.inbounds[0] = $new_inbound' > /tmp/v2ray_config_temp.json
     mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
     
     # Reiniciar V2Ray para aplicar los cambios
@@ -113,7 +123,7 @@ create_account() {
     echo "UUID: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
     echo "IP: $public_ip"
-    echo "Puerto: $current_port"
+    echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
         echo "Path WebSocket: /ws"
