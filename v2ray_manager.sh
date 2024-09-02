@@ -135,15 +135,19 @@ create_account() {
     echo "Seleccione el protocolo y la configuración:"
     echo "1. VMess"
     echo "2. VMess + WebSocket"
-    echo "3. VLESS"
-    echo "4. VLESS + WebSocket"
-    echo "5. Trojan + WebSocket"
+    echo "3. VMess + WebSocket + TLS"
+    echo "4. VLESS"
+    echo "5. VLESS + WebSocket"
+    echo "6. VLESS + WebSocket + TLS"
+    echo "7. Trojan"
+    echo "8. Trojan + WebSocket"
+    echo "9. Trojan + WebSocket + TLS"
     while true; do
-        read -p "Elija una opción (1-5): " protocol_choice
-        if [[ "$protocol_choice" =~ ^[1-5]$ ]]; then
+        read -p "Elija una opción (1-9): " protocol_choice
+        if [[ "$protocol_choice" =~ ^[1-9]$ ]]; then
             break
         else
-            echo -e "${RED}Por favor, elija una opción válida (1-5).${NC}"
+            echo -e "${RED}Por favor, elija una opción válida (1-9).${NC}"
         fi
     done
     
@@ -172,7 +176,32 @@ create_account() {
                 ;;
         esac
     done
-
+    
+    # Verificar si se selecciona una opción que requiere TLS
+    if [[ "$protocol_choice" =~ ^[369]$ ]]; then
+        echo -e "${YELLOW}Verificando certificados TLS...${NC}"
+        
+        # Verificar si el certificado y la clave privada existen
+        certificate_path="/etc/v2ray/certs/v2ray.crt"
+        key_path="/etc/v2ray/certs/v2ray.key"
+        
+        if [ ! -f "$certificate_path" ] || [ ! -f "$key_path" ]; then
+            echo -e "${YELLOW}Certificados no encontrados, generando nuevos...${NC}"
+            
+            # Crear directorio para certificados si no existe
+            mkdir -p /etc/v2ray/certs
+            
+            # Generar certificados autofirmados usando OpenSSL
+            openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
+            -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=yourdomain.com" \
+            -keyout "$key_path" -out "$certificate_path"
+            
+            echo -e "${GREEN}Certificados generados exitosamente.${NC}"
+        else
+            echo -e "${GREEN}Certificados existentes encontrados.${NC}"
+        fi
+    fi
+    
     # Configurar según la elección de protocolo
     case $protocol_choice in
         1) 
@@ -185,20 +214,40 @@ create_account() {
             settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}]}"
             stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
-        3) 
-            protocol="vless"
-            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
-            stream_settings="{}"
+        3)
+            protocol="vmess"
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
         4) 
             protocol="vless"
             settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
+            stream_settings="{}"
+            ;;
+        5) 
+            protocol="vless"
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
             stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
-        5)
+        6)
+            protocol="vless"
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
+            ;;
+        7)
+            protocol="trojan"
+            settings="{\"clients\": [{\"password\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{}"
+            ;;
+        8)
             protocol="trojan"
             settings="{\"clients\": [{\"password\": \"$uuid\", \"email\": \"$account_name\"}]}"
             stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/trojan-$account_name\"}}"
+            ;;
+        9)
+            protocol="trojan"
+            settings="{\"clients\": [{\"password\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/trojan-$account_name\"}}"
             ;;
     esac
     
@@ -229,6 +278,9 @@ create_account() {
     echo "Fecha de expiración: $expiry_date"
     if [ "$stream_settings" != "{}" ]; then
         echo "Path WebSocket: $(echo $stream_settings | jq -r '.wsSettings.path')"
+        if [ "$(echo $stream_settings | jq -r '.security')" == "tls" ]; then
+            echo "TLS activado"
+        fi
     fi
 }
 
