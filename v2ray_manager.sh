@@ -176,32 +176,7 @@ create_account() {
                 ;;
         esac
     done
-    
-    # Verificar si se selecciona una opción que requiere TLS
-    if [[ "$protocol_choice" =~ ^[369]$ ]]; then
-        echo -e "${YELLOW}Verificando certificados TLS...${NC}"
-        
-        # Verificar si el certificado y la clave privada existen
-        certificate_path="/etc/v2ray/certs/v2ray.crt"
-        key_path="/etc/v2ray/certs/v2ray.key"
-        
-        if [ ! -f "$certificate_path" ] || [ ! -f "$key_path" ]; then
-            echo -e "${YELLOW}Certificados no encontrados, generando nuevos...${NC}"
-            
-            # Crear directorio para certificados si no existe
-            mkdir -p /etc/v2ray/certs
-            
-            # Generar certificados autofirmados usando OpenSSL
-            openssl req -new -newkey rsa:2048 -days 365 -nodes -x509 \
-            -subj "/C=US/ST=State/L=City/O=Organization/OU=Department/CN=yourdomain.com" \
-            -keyout "$key_path" -out "$certificate_path"
-            
-            echo -e "${GREEN}Certificados generados exitosamente.${NC}"
-        else
-            echo -e "${GREEN}Certificados existentes encontrados.${NC}"
-        fi
-    fi
-    
+
     # Configurar según la elección de protocolo
     case $protocol_choice in
         1) 
@@ -217,7 +192,7 @@ create_account() {
         3)
             protocol="vmess"
             settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}]}"
-            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"/etc/v2ray/certs/v2ray.crt\", \"keyFile\": \"/etc/v2ray/certs/v2ray.key\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
         4) 
             protocol="vless"
@@ -232,7 +207,7 @@ create_account() {
         6)
             protocol="vless"
             settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
-            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"/etc/v2ray/certs/v2ray.crt\", \"keyFile\": \"/etc/v2ray/certs/v2ray.key\"}]}, \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
         7)
             protocol="trojan"
@@ -247,10 +222,16 @@ create_account() {
         9)
             protocol="trojan"
             settings="{\"clients\": [{\"password\": \"$uuid\", \"email\": \"$account_name\"}]}"
-            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"$certificate_path\", \"keyFile\": \"$key_path\"}]}, \"wsSettings\": {\"path\": \"/trojan-$account_name\"}}"
+            stream_settings="{\"network\": \"ws\", \"security\": \"tls\", \"tlsSettings\": {\"certificates\": [{\"certificateFile\": \"/etc/v2ray/certs/v2ray.crt\", \"keyFile\": \"/etc/v2ray/certs/v2ray.key\"}]}, \"wsSettings\": {\"path\": \"/trojan-$account_name\"}}"
             ;;
     esac
     
+    # Cambiar los permisos de los archivos TLS si se usa TLS
+    if [[ "$protocol_choice" =~ ^[369]$ ]]; then
+        sudo chown nobody:nogroup /etc/v2ray/certs/v2ray.crt /etc/v2ray/certs/v2ray.key
+        sudo chmod 600 /etc/v2ray/certs/v2ray.crt /etc/v2ray/certs/v2ray.key
+    fi
+
     # Crear la nueva configuración de inbound
     new_inbound=$(jq -n \
                   --arg protocol "$protocol" \
