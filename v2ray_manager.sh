@@ -82,13 +82,19 @@ EOL
             jq '.inbounds[0].settings.clients = []' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
             mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
         fi
+
+        # Corregir la configuración de VLESS si es necesario
+        if jq -e '.inbounds[0].protocol == "vless"' /usr/local/etc/v2ray/config.json > /dev/null; then
+            echo -e "${YELLOW}Detectada configuración VLESS. Asegurando que 'decryption' esté configurado correctamente...${NC}"
+            jq '.inbounds[0].settings.decryption = "none"' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
+            mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
+        fi
     fi
 
     if v2ray test -config /usr/local/etc/v2ray/config.json; then
         echo -e "${GREEN}La configuración de V2Ray es válida.${NC}"
     else
         echo -e "${RED}La configuración de V2Ray no es válida. Se ha creado una configuración básica.${NC}"
-        # Aquí puedes agregar lógica adicional para reparar configuraciones específicas si es necesario
     fi
 
     systemctl restart v2ray
@@ -131,12 +137,13 @@ create_account() {
     echo "2. VMess + WebSocket"
     echo "3. VLESS"
     echo "4. VLESS + WebSocket"
+    echo "5. Trojan + WebSocket"
     while true; do
-        read -p "Elija una opción (1-4): " protocol_choice
-        if [[ "$protocol_choice" =~ ^[1-4]$ ]]; then
+        read -p "Elija una opción (1-5): " protocol_choice
+        if [[ "$protocol_choice" =~ ^[1-5]$ ]]; then
             break
         else
-            echo -e "${RED}Por favor, elija una opción válida (1-4).${NC}"
+            echo -e "${RED}Por favor, elija una opción válida (1-5).${NC}"
         fi
     done
     
@@ -190,11 +197,17 @@ create_account() {
             protocol="vless"
             ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
             ;;
+        5)
+            protocol="trojan"
+            ws_settings='{"network": "ws", "wsSettings": {"path": "/trojan"}}'
+            ;;
     esac
     
     # Crear la nueva configuración de cliente
     if [ "$protocol" = "vless" ]; then
-        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"xtls-rprx-direct\"}"
+        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"\"}"
+    elif [ "$protocol" = "trojan" ]; then
+        new_client="{\"password\": \"$uuid\", \"email\": \"$account_name\"}"
     else
         new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
     fi
@@ -213,8 +226,11 @@ create_account() {
         return 1
     fi
 
-    # Actualizar el puerto y el protocolo
+    # Actualizar el puerto, el protocolo y las configuraciones específicas
     updated_config=$(echo $updated_config | jq --arg port "$port" --arg protocol "$protocol" '.inbounds[0].port = ($port | tonumber) | .inbounds[0].protocol = $protocol')
+    if [ "$protocol" = "vless" ]; then
+        updated_config=$(echo $updated_config | jq '.inbounds[0].settings.decryption = "none"')
+    fi
     if [ $? -ne 0 ]; then
         echo -e "${RED}Error al actualizar el puerto y el protocolo. Abortando...${NC}"
         return 1
@@ -244,13 +260,17 @@ create_account() {
     
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
-    echo "UUID: $uuid"
+    echo "UUID/Password: $uuid"
     echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
     echo "IP: $ip_address"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
     if [ "$ws_settings" != "{}" ]; then
-        echo "Path WebSocket: /ws"
+        if [ "$protocol" = "trojan" ]; then
+            echo "Path WebSocket: /trojan"
+        else
+            echo "Path WebSocket: /ws"
+        fi
     fi
 }
 
