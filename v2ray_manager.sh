@@ -106,7 +106,7 @@ create_account() {
     echo -e "${YELLOW}Creando nueva cuenta V2Ray...${NC}"
     
     # Generar un nuevo UUID
-    uuid=$(generate_uuid)
+    uuid=$(cat /proc/sys/kernel/random/uuid)
     
     # Solicitar al usuario el nombre de la cuenta y verificar que no exista
     while true; do
@@ -147,18 +147,12 @@ create_account() {
         fi
     done
     
-    # Solicitar al usuario el puerto y verificar que esté disponible
-    while true; do
-        read -p "Ingrese el puerto para V2Ray (por defecto 10086): " port
-        port=${port:-10086}
-        if ! netstat -tuln | grep -q ":$port "; then
-            break
-        else
-            echo -e "${RED}El puerto $port ya está en uso. Por favor, elija otro.${NC}"
-        fi
-    done
-
-    # Preguntar al usuario si desea usar IP pública o privada
+    # Obtener el puerto actual de V2Ray
+    current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
+    read -p "Ingrese el puerto para V2Ray (presione Enter para usar $current_port): " port
+    port=${port:-$current_port}
+    
+    # Solicitar al usuario la dirección IP
     echo "¿Qué dirección IP desea usar?"
     echo "1. IP privada (local)"
     echo "2. IP pública"
@@ -166,11 +160,11 @@ create_account() {
         read -p "Elija una opción (1-2): " ip_choice
         case $ip_choice in
             1) 
-                ip_address=$(get_local_ip)
+                ip_address=$(ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
                 break
                 ;;
             2) 
-                ip_address=$(get_public_ip)
+                ip_address=$(curl -s ifconfig.me)
                 break
                 ;;
             *) 
@@ -183,75 +177,43 @@ create_account() {
     case $protocol_choice in
         1) 
             protocol="vmess"
-            ws_settings='{}'
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{}"
             ;;
         2) 
             protocol="vmess"
-            ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
         3) 
             protocol="vless"
-            ws_settings='{}'
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
+            stream_settings="{}"
             ;;
         4) 
             protocol="vless"
-            ws_settings='{"network": "ws", "wsSettings": {"path": "/ws"}}'
+            settings="{\"clients\": [{\"id\": \"$uuid\", \"email\": \"$account_name\"}], \"decryption\": \"none\"}"
+            stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/ws-$account_name\"}}"
             ;;
         5)
             protocol="trojan"
-            ws_settings='{"network": "ws", "wsSettings": {"path": "/trojan"}}'
+            settings="{\"clients\": [{\"password\": \"$uuid\", \"email\": \"$account_name\"}]}"
+            stream_settings="{\"network\": \"ws\", \"wsSettings\": {\"path\": \"/trojan-$account_name\"}}"
             ;;
     esac
     
-    # Crear la nueva configuración de cliente
-    if [ "$protocol" = "vless" ]; then
-        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\", \"flow\": \"\"}"
-    elif [ "$protocol" = "trojan" ]; then
-        new_client="{\"password\": \"$uuid\", \"email\": \"$account_name\"}"
-    else
-        new_client="{\"id\": \"$uuid\", \"email\": \"$account_name\"}"
-    fi
+    # Crear la nueva configuración de inbound
+    new_inbound=$(jq -n \
+                  --arg protocol "$protocol" \
+                  --arg port "$port" \
+                  --argjson settings "$settings" \
+                  --argjson stream_settings "$stream_settings" \
+                  '{protocol: $protocol, port: ($port|tonumber), settings: $settings, streamSettings: $stream_settings}')
 
-    # Leer la configuración actual
-    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
-        echo -e "${RED}El archivo de configuración no existe. Ejecutando check_and_repair_config...${NC}"
-        check_and_repair_config
-    fi
-    config=$(cat /usr/local/etc/v2ray/config.json)
+    # Añadir el nuevo inbound a la configuración existente
+    jq --argjson new_inbound "$new_inbound" '.inbounds += [$new_inbound]' /usr/local/etc/v2ray/config.json > /tmp/v2ray_config_temp.json
+    mv /tmp/v2ray_config_temp.json /usr/local/etc/v2ray/config.json
 
-    # Añadir el nuevo cliente a la configuración existente
-    updated_config=$(echo $config | jq --argjson new_client "$new_client" '.inbounds[0].settings.clients += [$new_client]')
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Error al actualizar la configuración. Abortando...${NC}"
-        return 1
-    fi
-
-    # Actualizar el puerto, el protocolo y las configuraciones específicas
-    updated_config=$(echo $updated_config | jq --arg port "$port" --arg protocol "$protocol" '.inbounds[0].port = ($port | tonumber) | .inbounds[0].protocol = $protocol')
-    if [ "$protocol" = "vless" ]; then
-        updated_config=$(echo $updated_config | jq '.inbounds[0].settings.decryption = "none"')
-    fi
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Error al actualizar el puerto y el protocolo. Abortando...${NC}"
-        return 1
-    fi
-
-    # Actualizar la configuración de WebSocket si es necesario
-    if [ "$ws_settings" != "{}" ]; then
-        updated_config=$(echo $updated_config | jq --argjson ws "$ws_settings" '.inbounds[0].streamSettings = $ws')
-        if [ $? -ne 0 ]; then
-            echo -e "${RED}Error al actualizar la configuración de WebSocket. Abortando...${NC}"
-            return 1
-        fi
-    fi
-
-    # Guardar la configuración actualizada
-    echo $updated_config > /usr/local/etc/v2ray/config.json
-    if [ $? -ne 0 ]; then
-        echo -e "${RED}Error al guardar la configuración. Abortando...${NC}"
-        return 1
-    fi
-    
     # Reiniciar V2Ray para aplicar los cambios
     if ! systemctl restart v2ray; then
         echo -e "${RED}Error al reiniciar V2Ray. Por favor, verifique los logs del sistema.${NC}"
@@ -261,16 +223,12 @@ create_account() {
     echo -e "${GREEN}Cuenta creada con éxito:${NC}"
     echo "Nombre: $account_name"
     echo "UUID/Password: $uuid"
-    echo "Protocolo: $protocol${ws_settings:+ con WebSocket}"
+    echo "Protocolo: $protocol"
     echo "IP: $ip_address"
     echo "Puerto: $port"
     echo "Fecha de expiración: $expiry_date"
-    if [ "$ws_settings" != "{}" ]; then
-        if [ "$protocol" = "trojan" ]; then
-            echo "Path WebSocket: /trojan"
-        else
-            echo "Path WebSocket: /ws"
-        fi
+    if [ "$stream_settings" != "{}" ]; then
+        echo "Path WebSocket: $(echo $stream_settings | jq -r '.wsSettings.path')"
     fi
 }
 
@@ -280,32 +238,40 @@ list_accounts() {
     echo -e "${YELLOW}Listando todas las cuentas V2Ray...${NC}"
     
     # Obtener la IP local
-    local_ip=$(get_local_ip)
+    local_ip=$(ip addr show | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | grep -v '127.0.0.1' | head -n 1)
     
-    # Verificar si el archivo de configuración existe
-    if [ ! -f /usr/local/etc/v2ray/config.json ]; then
-        echo -e "${RED}El archivo de configuración de V2Ray no existe. ¿Está V2Ray instalado correctamente?${NC}"
-        return
-    fi
-
-    # Obtener el puerto y protocolo actuales
-    current_port=$(jq '.inbounds[0].port' /usr/local/etc/v2ray/config.json)
-    current_protocol=$(jq -r '.inbounds[0].protocol' /usr/local/etc/v2ray/config.json)
-    
-    # Verificar si se está usando WebSocket
-    using_ws=$(jq -r '.inbounds[0].streamSettings.network // empty' /usr/local/etc/v2ray/config.json)
-    
-    echo "Configuración actual:"
     echo "IP local: $local_ip"
-    echo "Puerto: $current_port"
-    echo "Protocolo: $current_protocol${using_ws:+ con WebSocket}"
-    if [[ $using_ws ]]; then
-        ws_path=$(jq -r '.inbounds[0].streamSettings.wsSettings.path // "/ws"' /usr/local/etc/v2ray/config.json)
-        echo "Path WebSocket: $ws_path"
-    fi
     echo ""
     echo "Cuentas:"
-    jq -r '.inbounds[0].settings.clients[] | "Email: \(.email)\nUUID: \(.id)\n"' /usr/local/etc/v2ray/config.json
+    
+    accounts=$(jq -r '.inbounds[] | select(.settings.clients != null) | .settings.clients[] | "\(.email)|\(.id // .password)"' /usr/local/etc/v2ray/config.json)
+    
+    IFS=$'\n'
+    index=1
+    for account in $accounts; do
+        IFS='|' read -r email uuid <<< "$account"
+        echo "$index) $email"
+        index=$((index+1))
+    done
+    
+    echo ""
+    read -p "Seleccione un número para ver detalles (o presione Enter para volver): " choice
+    
+    if [[ -n $choice && $choice =~ ^[0-9]+$ ]]; then
+        selected_account=$(echo "$accounts" | sed -n "${choice}p")
+        IFS='|' read -r email uuid <<< "$selected_account"
+        
+        inbound=$(jq -r --arg email "$email" '.inbounds[] | select(.settings.clients[].email == $email)' /usr/local/etc/v2ray/config.json)
+        
+        echo ""
+        echo "Detalles de la cuenta $email:"
+        echo "UUID/Password: $uuid"
+        echo "Protocolo: $(echo $inbound | jq -r '.protocol')"
+        echo "Puerto: $(echo $inbound | jq -r '.port')"
+        if [[ $(echo $inbound | jq -r '.streamSettings.network') == "ws" ]]; then
+            echo "WebSocket Path: $(echo $inbound | jq -r '.streamSettings.wsSettings.path')"
+        fi
+    fi
 }
 
 # Función para eliminar una cuenta
